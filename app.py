@@ -83,13 +83,14 @@ def pipeline_extract():
         "input_panel": asdict(input_panel),
     })
 
-
 @app.post("/api/pipeline/search")
 def pipeline_search():
     payload = request.get_json(silent=True) or {}
     req = _parse_request(payload)
+
+    extract_result = None
     active_image_url = req.selected_image_url
-    extract_result = None      
+
     if not active_image_url:
         extract_result = resolve_input(
             image_url=req.image_url,
@@ -98,33 +99,56 @@ def pipeline_search():
         )
         active_image_url = extract_result["hero_image_url"]
 
+    print(f"Starting search for {active_image_url}")
+
     if not active_image_url:
         err = ErrorPayload(error=(extract_result or {}).get("error") or "Could not resolve an image.")
-        return jsonify(asdict(err)), 400 
-    
-    print(f"Starting search for {active_image_url}")
-    input_panel = InputPanel(
-        submitted_listing_url=extract_result["listing_url"],
-        listing_source=extract_result["listing_source"],
-        submitted_image_url=req.image_url,
-        selected_image_url=req.selected_image_url,
-        active_image_url=active_image_url,
-        metadata={
-            "input_mode": "listing_url" if req.listing_url else "image_url",
-            "extractor_status": extract_result["status"],
-            "notes": [],
-            "name": extract_result["metadata"].get("name"),
-            "city": extract_result["metadata"].get("city"),
-            "address": extract_result["metadata"].get("address"),
-            "room_id": extract_result.get("room_id"),
-            "image_candidate_count": len(extract_result.get("image_candidates", [])),
-        },
-    )
+        return jsonify(asdict(err)), 400
+
+    if extract_result is not None:
+        input_panel = InputPanel(
+            submitted_listing_url=extract_result["listing_url"],
+            listing_source=extract_result["listing_source"],
+            submitted_image_url=req.image_url,
+            selected_image_url=req.selected_image_url,
+            active_image_url=active_image_url,
+            metadata={
+                "input_mode": "listing_url" if req.listing_url else "image_url",
+                "extractor_status": extract_result["status"],
+                "notes": [],
+                "name": extract_result["metadata"].get("name"),
+                "city": extract_result["metadata"].get("city"),
+                "address": extract_result["metadata"].get("address"),
+                "room_id": extract_result.get("room_id"),
+                "image_candidate_count": len(extract_result.get("image_candidates", [])),
+            },
+        )
+        property_name = extract_result["metadata"].get("name")
+        base_address = extract_result["metadata"].get("address")
+    else:
+        input_panel = InputPanel(
+            submitted_listing_url=req.listing_url,
+            listing_source=req.listing_source,
+            submitted_image_url=req.image_url,
+            selected_image_url=req.selected_image_url,
+            active_image_url=active_image_url,
+            metadata={
+                "input_mode": "listing_url" if req.listing_url else "image_url",
+                "extractor_status": "ok",
+                "notes": [],
+                "name": None,
+                "city": None,
+                "address": None,
+                "room_id": None,
+                "image_candidate_count": 1,
+            },
+        )
+        property_name = None
+        base_address = None
 
     search_result = run_image_search(active_image_url or "")
-    classified = classify_matches(search_result["matches"], property_name=extract_result["metadata"].get("name"))
-    contact_result = scrape_candidates(classified["direct"], classified["unknown"], base_address=extract_result["metadata"].get("address"))
-
+    classified = classify_matches(search_result["matches"], property_name=property_name)
+    contact_result = scrape_candidates(classified["direct"], classified["unknown"], base_address=base_address)
 
         
     def build_match_records(items):
