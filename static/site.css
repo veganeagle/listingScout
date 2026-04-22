@@ -54,6 +54,21 @@ body {
   white-space: nowrap;
 }
 
+.nav-link {
+  color: var(--stone);
+  text-decoration: none;
+  border: 1px solid var(--border);
+  background: var(--dark2);
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.nav-link:hover {
+  background: var(--dark3);
+}
+
+
 input, select, button {
   height: 44px;
   border-radius: 8px;

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from dataclasses import asdict
-from flask import Flask, jsonify, request, send_from_directory, render_template
+from flask import Flask, jsonify, request, send_from_directory, render_template, redirect
 from flask_cors import CORS
 
 from models import (PipelineRequest, PipelineResponse, InputPanel,
@@ -179,8 +179,7 @@ def pipeline_search():
 
 @app.get("/")
 def root():
-    return render_template("pipeline.html")
-
+    return redirect("/pipeline.html")
 
 @app.get("/pipeline.html")
 def pipeline_page():
