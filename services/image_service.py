@@ -86,7 +86,7 @@ def search_serpapi(image_url: str) -> list[dict]:
             if item.get("link"):
                 thumb = item.get("thumbnail")
                 cand_hash = _phash_from_url(thumb) if thumb and source_hash else None
-                score1 = (source_hash - cand_hash) if source_hash and cand_hash else None
+                score1 = int(source_hash - cand_hash) if source_hash and cand_hash else None
                 if _is_match(score1, idx):
                     out.append(_normalize_match(url=item["link"], title=item.get("title", ""), source="serpapi",
                         match_type="visual", thumbnail_url=thumb, rank=idx, score1=score1,

@@ -88,13 +88,21 @@ def pipeline_extract():
 def pipeline_search():
     payload = request.get_json(silent=True) or {}
     req = _parse_request(payload)
-    extract_result = resolve_input( image_url=req.image_url, listing_url=req.listing_url, selected_image_url=req.selected_image_url)
-    active_image_url = extract_result["hero_image_url"]
-    print(f"Starting search for {active_image_url}")
+    active_image_url = req.selected_image_url
+    extract_result = None      
+    if not active_image_url:
+        extract_result = resolve_input(
+            image_url=req.image_url,
+            listing_url=req.listing_url,
+            selected_image_url=req.selected_image_url,
+        )
+        active_image_url = extract_result["hero_image_url"]
 
     if not active_image_url:
-        err = ErrorPayload(error=extract_result["error"] or "Could not resolve an image.")
-        return jsonify(asdict(err)), 400
+        err = ErrorPayload(error=(extract_result or {}).get("error") or "Could not resolve an image.")
+        return jsonify(asdict(err)), 400 
+    
+    print(f"Starting search for {active_image_url}")
     input_panel = InputPanel(
         submitted_listing_url=extract_result["listing_url"],
         listing_source=extract_result["listing_source"],
@@ -128,8 +136,8 @@ def pipeline_search():
                 source=item.get("source", ""),
                 match_type=item.get("match_type", "unknown"),
                 thumbnail_url=item.get("thumbnail_url"),
-                rank=item.get("rank", 0),
-                score1=item.get("score1"),
+                rank=int(item.get("rank", 0)) if item.get("rank") is not None else 0,
+                score1=int(item.get("score1")) if item.get("score1") is not None else None,
                 listing_id=item.get("listing_id"),
                 platform=item.get("platform"),
                 hidden_reason=item.get("hidden_reason"),
@@ -150,8 +158,8 @@ def pipeline_search():
                 error=item.get("error"),
                 source_bucket=item.get("source_bucket"),
                 source_quality=item.get("source_quality"),
-                rank=item.get("rank", 0),
-                score1=item.get("score1"),
+                rank=int(item.get("rank", 0)) if item.get("rank") is not None else 0,
+                score1=int(item.get("score1")) if item.get("score1") is not None else None,
             )
             for item in items
         ]
