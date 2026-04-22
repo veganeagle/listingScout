@@ -1,0 +1,10 @@
+# Listing Finder — Python dependencies
+# Vercel reads this automatically when deploying api/index.py
+
+flask>=3.0.0
+flask-cors>=4.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+imagehash
+pillow

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bulk</title>
+
+  <link rel="stylesheet" href="/site.css?v=3" />
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="topbar">
+    <div class="topbar-row">
+      <div class="brand">Bulk Property Scout</div>
+    </div>
+    <div class="topbar-row">
+      <input type="file" id="csv-file" accept=".csv,.xlsx,.xls" />
+      <button onclick="runBulk()">Run Bulk</button>
+      <button class="secondary" id="download-btn" onclick="downloadCsv()" disabled>Download CSV</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="eyebrow">Results</div>
+    <h2>Progress</h2>
+    <div class="scroll">
+      <div id="rows"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = "/api";
+
+let bulkResults = [];
+
+function esc(s) {
+  return String(s || "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;");
+}
+
+function readFile(file, mode = "text") {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = e => resolve(e.target.result);
+    r.onerror = reject;
+    if (mode === "arraybuffer") r.readAsArrayBuffer(file);
+    else r.readAsText(file);
+  });
+}
+
+
+function firstUrlFromText(value) {
+  const s = String(value || "").trim();
+  if (!s) return null;
+  const m = s.match(/https?:\/\/[^\s",]+/i);
+  if (m) return m[0];
+  if (s.includes("airbnb.com/rooms/") || s.includes("vrbo.com/")) return s;
+  return null;
+}
+
+function extractUrlsFromCsv(text) {
+  const lines = text.split(/\r?\n/);
+  const out = [];
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+
+    const cells = line.split(",");
+
+    for (const cell of cells) {
+      const url = firstUrlFromText(cell.replace(/^"|"$/g, "").trim());
+      if (url) {
+        out.push(url);
+        break;
+      }
+    }
+  }
+
+  return Array.from(new Set(out));
+}
+
+function extractUrlsFromWorkbook(buffer) {
+  const workbook = XLSX.read(buffer, { type: "array", cellHTML: false, cellFormula: false, cellStyles: false });
+  const out = [];
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet || !sheet["!ref"]) continue;
+    const range = XLSX.utils.decode_range(sheet["!ref"]);
+
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      let rowUrl = null;
+
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        const cell = sheet[addr];
+        if (!cell) continue;
+
+        const hyperlink = cell.l && cell.l.Target ? String(cell.l.Target).trim() : null;
+        const textUrl = firstUrlFromText(cell.v);
+
+        rowUrl = hyperlink || textUrl || null;
+        if (rowUrl) break;
+      }
+      if (rowUrl) out.push(rowUrl);
+    }
+  }
+  return Array.from(new Set(out));
+}
+
+
+
+
+function addRow(url) {
+  const id = "r" + Math.random().toString(36).slice(2);
+
+  const html = `
+    <div class="match-card" id="${id}">
+      <div class="thumb"></div>
+      <div>
+        <div class="domain">${esc(url)}</div>
+        <div class="title" id="${id}-status">queued</div>
+        <div class="badge-row">
+          <span class="badge" id="${id}-matches">-</span>
+          <span class="badge" id="${id}-email">-</span>
+          <span class="badge" id="${id}-phone">-</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("rows").insertAdjacentHTML("beforeend", html);
+
+  return id;
+}
+
+function setStatus(id, s) {
+  document.getElementById(id + "-status").textContent = s;
+}
+
+function setThumb(id, url) {
+  if (!url) return;
+  document.querySelector(`#${id} .thumb`).innerHTML = `<img src="${url}">`;
+}
+
+function setMatches(id, n) {
+  document.getElementById(id + "-matches").textContent = n + " matches";
+}
+
+function setContact(id, email, phone) {
+  document.getElementById(id + "-email").textContent = email || "-";
+  document.getElementById(id + "-phone").textContent = phone || "-";
+}
+
+function emailQuality(email, domain) {
+  const e = String(email || "").toLowerCase();
+  const d = String(domain || "").toLowerCase();
+  if (!e) return 0;
+  if (e.endsWith("@" + d)) return 3;
+  if (e.includes("@gmail.com") || e.includes("@outlook.com") || e.includes("@hotmail.com") || e.includes("@yahoo.com")) return 1;
+  return 2;
+}
+
+function recordScore(r) {
+  const direct = r.source_bucket === "direct" ? 1000 : 0;
+  const sourceQuality =
+    r.source_quality === "high" ? 200 :
+    r.source_quality === "medium" ? 100 : 0;
+
+  const bestEmailQ = Math.max(0, ...(r.emails || []).map(e => emailQuality(e, r.domain)));
+  const emailScore = bestEmailQ * 100;
+  const phoneScore = (r.phones || []).length > 0 ? 60 : 0;
+  const addressScore = r.address ? 30 : 0;
+
+  const score1Bonus = typeof r.score1 === "number" ? Math.max(0, 40 - r.score1) : 0;
+  const rankBonus = typeof r.rank === "number" ? Math.max(0, 20 - r.rank) : 0;
+
+  return direct + sourceQuality + emailScore + phoneScore + addressScore + score1Bonus + rankBonus;
+}
+
+function bestContact(records) {
+  return (records || [])
+    .slice()
+    .sort((a, b) => recordScore(b) - recordScore(a))[0];
+}
+
+async function runOne(url, id) {
+  try {
+    setStatus(id, "extracting");
+
+    const extract = await fetch(API + "/pipeline/extract", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ listing_url: url })
+    }).then(r => r.json());
+
+    if (!extract.ok) throw new Error(extract.error);
+
+    setThumb(id, extract.input_panel.active_image_url);
+
+    setStatus(id, "searching");
+
+    const search = await fetch(API + "/pipeline/search", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        listing_url: url,
+        selected_image_url: extract.input_panel.active_image_url
+      })
+    }).then(r => r.json());
+
+    if (!search.ok) throw new Error(search.error);
+
+    setMatches(id, search.match_discovery.raw_match_count);
+
+    const best = bestContact(search.contact.records);
+    const bestUrl = best?.url || "";
+    const email = best?.emails?.[0] || "";
+    const phone = best?.phones?.[0] || "";
+
+    setContact(id, email, phone);
+    bulkResults.push({
+        input_listing_url: url,
+        property_name: extract.input_panel.metadata?.name || "",
+        property_address: extract.input_panel.metadata?.address || best?.address || "",
+        best_source_bucket: best?.source_bucket || "",
+        best_domain: best?.domain || "",
+        best_contact_url: best?.url || "",
+        best_email: email,
+        best_phone: phone,
+        matches: search.match_discovery.raw_match_count,
+        status: "ok"
+        });
+
+    setStatus(id, "done");
+
+  } catch (e) {
+    setStatus(id, "error");
+    bulkResults.push({
+      input_listing_url: url,
+      status: "error"
+    });
+  }
+}
+
+async function runBulk() {
+  const file = document.getElementById("csv-file").files[0];
+  if (!file) return;
+
+  bulkResults = [];
+  document.getElementById("rows").innerHTML = "";
+  document.getElementById("download-btn").disabled = true;
+  let urls = [];
+  if (file.name.toLowerCase().endsWith(".csv")) {
+    const text = await readFile(file, "text");
+    urls = extractUrlsFromCsv(text);
+  } else {
+    const buffer = await readFile(file, "arraybuffer");
+    urls = extractUrlsFromWorkbook(buffer);
+  }
+  urls = urls.slice(0, 200);
+  
+  for (const url of urls) {
+    const id = addRow(url);
+    await runOne(url, id);
+  }
+
+  document.getElementById("download-btn").disabled = false;
+}
+
+function downloadCsv() {
+  const header = Object.keys(bulkResults[0] || {});
+  const rows = bulkResults.map(r =>
+    header.map(h => `"${String(r[h] || "").replaceAll('"','""')}"`).join(",")
+  );
+
+  const csv = [header.join(","), ...rows].join("\n");
+
+  const blob = new Blob([csv], {type:"text/csv"});
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "bulk_results.csv";
+  a.click();
+
+  URL.revokeObjectURL(url);
+}
+</script>
+
+</body>
+</html>
